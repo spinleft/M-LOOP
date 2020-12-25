@@ -1176,6 +1176,67 @@ class MachineLearner(Learner):
             )
             self.cost_range = float(cost_range)
 
+            # Only the data whose index is in valid_run_range will be kept,
+            # and some corresponding data should be recaculated.
+            self._have_invalid_run = False
+            if 'valid_run_range' in kwargs:
+                valid_run_range = kwargs['valid_run_range']
+                if isinstance(valid_run_range, int):
+                    if valid_run_range <= 0:
+                        pass
+                    else:
+                        self._have_invalid_run = True
+                        self.all_params = self.all_params[:valid_run_range]
+                        self.all_costs = self.all_costs[:valid_run_range]
+                        self.all_uncers = self.all_uncers[:valid_run_range]
+                        for i in range(len(self.bad_run_indexs)):
+                            if self.bad_run_indexs[i] >= valid_run_range:
+                                del self.bad_run_indexs[i:]
+                                break
+                elif isinstance(valid_run_range, list) or isinstance(valid_run_range, np.ndarray):
+                    valid_run_range = np.array(valid_run_range)
+                    if valid_run_range.ndim == 1:
+                        self._have_invalid_run = True
+                        self.all_params = self.all_params[valid_run_range]
+                        self.all_costs = self.all_costs[valid_run_range]
+                        self.all_uncers = self.all_uncers[valid_run_range]
+                        new_bad_run_indexs = []
+                        for i in range(len(valid_run_range)):
+                            if valid_run_range[i] in self.bad_run_indexs:
+                                new_bad_run_indexs.append(i)
+                        self.bad_run_indexs = new_bad_run_indexs
+                    elif valid_run_range.ndim == 2:
+                        self._have_invalid_run = True
+                        all_params = np.array([], dtype=float)
+                        all_costs = np.array([], dtype=float)
+                        all_uncers = np.array([], dtype=float)
+                        new_bad_run_indexs = []
+                        i = 0
+                        for subrange in valid_run_range:
+                            all_params = np.concatenate((all_params, self.all_params[subrange[0]:subrange[1]]))
+                            all_costs = np.concatenate((all_costs, self.all_costs[subrange[0]:subrange[1]]))
+                            all_uncers = np.concatenate((all_uncers, self.all_uncers[subrange[0]:subrange[1]]))
+                            for index in range(subrange[0], subrange[1]):
+                                if index in self.bad_run_indexs:
+                                    new_bad_run_indexs.append(i)
+                                i += 1
+                        self.all_params = all_params
+                        self.all_costs = all_costs
+                        self.all_uncers = all_uncers
+                        self.bad_run_indexs = new_bad_run_indexs
+                    else:
+                        pass
+                else:
+                    pass
+                if self._have_invalid_run:
+                    self.costs_count = len(self.all_costs)
+                    self.best_index = np.argmin(self.all_costs)
+                    self.best_cost = self.all_costs[self.best_index]
+                    self.best_params = self.all_params[self.best_index]
+                    self.worst_index = np.argmax(self.all_costs)
+                    self.worst_cost = self.all_costs[self.worst_index]
+                    self.cost_range = self.worst_cost - self.best_cost
+
             # Parameters that must be the same in keyword arguments and in the
             # training archive in order to load some of the data.
             # learner type
@@ -1669,6 +1730,9 @@ class GaussianProcessLearner(MachineLearner, mp.Process):
             self.noise_level_history = mlu.safe_cast_to_list(
                 training_dict['noise_level_history']
             )
+            self.update_hyperparameters_history = mlu.safe_cast_to_list(
+                training_dict['update_hyperparameters_history']
+            )
 
             # Counters
             self.fit_count = int(training_dict['fit_count'])
@@ -1678,10 +1742,24 @@ class GaussianProcessLearner(MachineLearner, mp.Process):
                 length_scale = mlu.safe_cast_to_array(training_dict['length_scale'])
             if noise_level is None:
                 noise_level = float(training_dict['noise_level'])
+            
+            # Retrieve earlier history if the parameters are loaded from
+            # a training archive that has invalid runs.
+            if self._have_invalid_run:
+                max_valid_index = np.max(np.array(kwargs['valid_run_range'])) - 1
+                for i in range(len(self.update_hyperparameters_history)):
+                    if self.update_hyperparameters_history[i] > max_valid_index:
+                        del self.length_scale_history[i:]
+                        del self.noise_level_history[i:]
+                        del self.update_hyperparameters_history[i:]
+                        break
+                length_scale = self.length_scale_history[-1]
+                noise_level = self.noise_level_history[-1]
         else:
             # Storage variables, archived
             self.length_scale_history = []
             self.noise_level_history = []
+            self.update_hyperparameters_history = []
 
             # Counters
             self.fit_count = 0
@@ -1758,6 +1836,7 @@ class GaussianProcessLearner(MachineLearner, mp.Process):
                                   'length_scale_bounds':self.length_scale_bounds,
                                   'noise_level_history':self.noise_level_history,
                                   'noise_level_bounds':self.noise_level_bounds,
+                                  'update_hyperparameters_history':self.update_hyperparameters_history,
                                   'bias_func_cycle':self.bias_func_cycle,
                                   'bias_func_cost_factor':self.bias_func_cost_factor,
                                   'bias_func_uncer_factor':self.bias_func_uncer_factor,
@@ -1929,6 +2008,7 @@ class GaussianProcessLearner(MachineLearner, mp.Process):
             else:
                 self.length_scale = last_hyperparameters['length_scale']
                 self.length_scale_history.append(self.length_scale)
+            self.update_hyperparameters_history.append(self.costs_count-1)
 
 
     def update_bias_function(self):

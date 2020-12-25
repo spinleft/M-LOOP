@@ -162,7 +162,7 @@ class Controller():
             self.start_datetime = datetime.datetime(start_datetime)
         self.max_num_runs = float(max_num_runs)
         if self.max_num_runs<=0:
-            self.log.error('Number of runs must be greater than zero. max_num_runs:'+repr(self.max_num_run))
+            self.log.error('Number of runs must be greater than zero. max_num_runs:'+repr(self.max_num_runs))
             raise ValueError
         self.target_cost = float(target_cost)
         self.max_num_runs_without_better_params = float(max_num_runs_without_better_params)
@@ -595,7 +595,7 @@ class MachineLearnerController(Controller):
         self.new_params_event = self.ml_learner.new_params_event
         self.remaining_kwargs = self.ml_learner.remaining_kwargs
         self.generation_num = self.ml_learner.generation_num
-
+        self.start_index = self.ml_learner.costs_count
 
     def _put_params_and_out_dict(self, params):
         '''
@@ -632,14 +632,14 @@ class MachineLearnerController(Controller):
         '''
         #Run the training runs using the standard optimization routine.
         self.log.debug('Starting training optimization.')
-        self.log.info('Run:' + str(self.num_in_costs +1) + ' (training)')
+        self.log.info('Run:' + str(self.start_index + self.num_in_costs +1) + ' (training)')
         next_params = self._first_params()
         self._put_params_and_out_dict(next_params)
         self.save_archive()
         self._get_cost_and_in_dict()
 
         while (self.num_in_costs < self.num_training_runs) and self.check_end_conditions():
-            self.log.info('Run:' + str(self.num_in_costs +1) + ' (training)')
+            self.log.info('Run:' + str(self.start_index + self.num_in_costs +1) + ' (training)')
             next_params = self._next_params()
             self._put_params_and_out_dict(next_params)
             self.save_archive()
@@ -647,7 +647,7 @@ class MachineLearnerController(Controller):
 
         if self.check_end_conditions():
             #Start last training run
-            self.log.info('Run:' + str(self.num_in_costs +1) + ' (training)')
+            self.log.info('Run:' + str(self.start_index + self.num_in_costs +1) + ' (training)')
             next_params = self._next_params()
             self._put_params_and_out_dict(next_params)
 
@@ -669,12 +669,12 @@ class MachineLearnerController(Controller):
         while self.check_end_conditions():
             run_num = self.num_in_costs + 1
             if ml_consec==self.generation_num or (self.no_delay and self.ml_learner_params_queue.empty()):
-                self.log.info('Run:' + str(run_num) + ' (trainer)')
+                self.log.info('Run:' + str(self.start_index + run_num) + ' (trainer)')
                 next_params = self._next_params()
                 self._put_params_and_out_dict(next_params)
                 ml_consec = 0
             else:
-                self.log.info('Run:' + str(run_num) + ' (machine learner)')
+                self.log.info('Run:' + str(self.start_index + run_num) + ' (machine learner)')
                 next_params = self.ml_learner_params_queue.get()
                 super(MachineLearnerController,self)._put_params_and_out_dict(next_params, param_type=self.machine_learner_type)
                 ml_consec += 1
